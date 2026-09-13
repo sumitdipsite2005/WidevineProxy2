@@ -5,6 +5,62 @@ const manifestUrls = new Map();
 const manifestHeaders = new Map();
 const emeStatuses = {};
 
+const PYTHON_BRIDGE_ATTACH_ORIGIN = "http://127.0.0.1:8765";
+const PYTHON_BRIDGE_ATTACH_PATH_RE = /^\/attach\/([^/]+)$/;
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function attachPythonBridgeJobFromPage() {
+    // Only the top-level attach page should establish the tab association.
+    if (window.top !== window)
+        return;
+
+    let url;
+    try {
+        url = new URL(window.location.href);
+    } catch (e) {
+        return;
+    }
+
+    if (url.origin !== PYTHON_BRIDGE_ATTACH_ORIGIN)
+        return;
+
+    const match = PYTHON_BRIDGE_ATTACH_PATH_RE.exec(url.pathname);
+    if (!match)
+        return;
+
+    let jobId;
+    try {
+        jobId = decodeURIComponent(match[1]);
+    } catch (e) {
+        return;
+    }
+
+    // Retry the idempotent handshake. browser.py will later wait for the
+    // bridge's positive attached status before navigating to the real page.
+    for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+            const response = await chrome.runtime.sendMessage({
+                type: "PYTHON_BRIDGE_ATTACH",
+                payload: { job_id: jobId }
+            });
+
+            if (response?.ok)
+                return;
+        } catch (e) {
+            // Retry below.
+        }
+
+        await sleep(250 * attempt);
+    }
+
+    console.error("Widevine Bridge job attachment failed", jobId);
+}
+
+attachPythonBridgeJobFromPage();
+
 function onMessage(type, handler) {
     handlers.set(type, handler);
 }
@@ -46,7 +102,7 @@ onMessage("SETTINGS", async _ => {
         device_type: deviceType,
         server_cert: settings.server_cert ?? false,
         proxy_mode: settings.proxy_mode ?? "event"
-    }
+    };
 });
 
 onMessage("MANIFEST_URL", async (data) => {
@@ -79,6 +135,18 @@ onMessage("KEYS", async (data) => {
     } catch (e) {
         console.error("KEY handler failed", e);
         throw e;
+    }
+
+    // Ask the background worker which recorder job owns this tab. This keeps
+    // the correlation explicit even when several recorder jobs run at once.
+    try {
+        const bridgeJob = await chrome.runtime.sendMessage({
+            type: "PYTHON_BRIDGE_GET_JOB"
+        });
+        if (bridgeJob?.ok && typeof bridgeJob.job_id === "string")
+            data.python_bridge_job_id = bridgeJob.job_id;
+    } catch (e) {
+        // A normal extension capture must still succeed when no bridge is used.
     }
 
     await chrome.storage.local.set({ [data.pssh_data]: data })
