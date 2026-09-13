@@ -175,15 +175,24 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
         return;
 
     for (const { oldValue, newValue } of Object.values(changes)) {
-        const isNewCapture =
-            oldValue === undefined &&
+        const isCaptureRecord =
             newValue &&
             typeof newValue === "object" &&
             typeof newValue.type === "string" &&
             typeof newValue.timestamp === "number";
 
-        if (isNewCapture) {
+        if (!isCaptureRecord)
+            continue;
+
+        // Forward both first-time captures and later refreshes of an existing
+        // storage entry. WidevineProxy2 keys records by PSSH, so recording the
+        // same channel/page again may update an existing item instead of adding
+        // a brand-new one.
+        const isNewOrUpdatedCapture =
+            oldValue === undefined ||
+            oldValue?.timestamp !== newValue.timestamp;
+
+        if (isNewOrUpdatedCapture)
             sendToPythonBridge(newValue);
-        }
     }
 });
