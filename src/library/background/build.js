@@ -13,6 +13,7 @@ function stripEsm(code) {
 
 const background = stripEsm(read("background.js"));
 const remote_cdm = stripEsm(read("remote_cdm.js"));
+const python_bridge = stripEsm(read("python_bridge.js"));
 
 const header = `(function (__g) {
 var module, exports, define;
@@ -31,6 +32,8 @@ const bundle = [
   background,
   "/* ===== remote_cdm.js ===== */",
   remote_cdm,
+  "/* ===== python_bridge.js ===== */",
+  python_bridge,
   footer,
 ].join("\n");
 
